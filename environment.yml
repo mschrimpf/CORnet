@@ -1,0 +1,12 @@
+name: CORnet
+channels:
+- defaults
+- pytorch
+dependencies:
+  - python>=3.7
+  - pytorch
+  - torchvision
+  - pandas
+  - tqdm
+  - pip:
+    - fire
