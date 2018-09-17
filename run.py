@@ -1,33 +1,24 @@
-import os
-import sys
 import argparse
-import time
 import glob
-import pickle
-import subprocess
-import shlex
-import io
-import pprint
-import math
-import base64
-import json
-import string
 import importlib
-from collections import OrderedDict
+import io
+import os
+import pickle
+import pprint
+import shlex
+import subprocess
+import time
 
+import fire
 import numpy as np
 import pandas
-import tqdm
-import fire
-
 import torch
 import torch.nn as nn
 import torchvision
-
+import tqdm
 from PIL import Image
-Image.warnings.simplefilter('ignore')
 
-from sklearn.decomposition import PCA
+Image.warnings.simplefilter('ignore')
 
 np.random.seed(0)
 torch.manual_seed(0)
@@ -41,7 +32,7 @@ parser.add_argument('--data_path', default='./',
                     help='path to ImageNet folder that contains train and val folders')
 parser.add_argument('-o', '--output_path', default=None,
                     help='path for storing ')
-parser.add_argument('--model', choices=['Z', 'R', 'S'], default='Z',
+parser.add_argument('--model', choices=['Z', 'R', 'S', 'D'], default='Z',
                     help='which model to train')
 parser.add_argument('--times', default=5, type=int,
                     help='number of time steps to run the model (only R and S models)')
@@ -222,7 +213,8 @@ def test(layer='decoder', sublayer='avgpool', restore_path=None, imsize=224, use
     model_feats = []
     with torch.no_grad():
         model_feats = []
-        for fname in tqdm.tqdm(sorted(glob.glob(os.path.join(FLAGS.data_path, '*.*')))):
+        filepaths = glob.glob(os.path.join(FLAGS.data_path, '*.*'))
+        for fname in tqdm.tqdm(sorted(filepaths)):
             im = Image.open(fname).convert('RGB')
             im = transform(im)
             im = im.unsqueeze(0)  # adding extra dimension for batch size of 1
