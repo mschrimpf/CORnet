@@ -1,36 +1,26 @@
-import os
-import sys
 import argparse
-import time
 import glob
-import pickle
-import subprocess
-import shlex
-import io
-import pprint
-import math
-import base64
-import json
-import string
 import importlib
-from collections import OrderedDict
+import io
+import os
+import pickle
+import pprint
+import shlex
+import subprocess
+import time
 
+import fire
 import numpy as np
 import pandas
-import tqdm
-import fire
-
 import torch
 import torch.nn as nn
 import torchvision
-
+import tqdm
 from PIL import Image
+
+from flops import add_flops_counting_methods
+
 Image.warnings.simplefilter('ignore')
-
-from sklearn.decomposition import PCA
-
-np.random.seed(0)
-torch.manual_seed(0)
 
 torch.backends.cudnn.benchmark = True
 normalize = torchvision.transforms.Normalize(mean=[0.485, 0.456, 0.406],
@@ -60,10 +50,14 @@ parser.add_argument('--step_size', default=10, type=int,
                     help='after how many epoch learning rate should be decreased 10x')
 parser.add_argument('--momentum', default=.9, type=float, help='momentum')
 parser.add_argument('--weight_decay', default=1e-4, type=float,
-                    help='weight decay ')
-
+                    help='weight decay')
+parser.add_argument('--seed', default=0, type=int,
+                    help='random seed')
 
 FLAGS, _ = parser.parse_known_args()
+
+np.random.seed(FLAGS.seed)
+torch.manual_seed(FLAGS.seed)
 
 
 def set_gpus(n=1):
@@ -72,7 +66,8 @@ def set_gpus(n=1):
     free memory.
     """
     gpus = subprocess.run(shlex.split(
-        'nvidia-smi --query-gpu=index,memory.free,memory.total --format=csv,nounits'), check=True, stdout=subprocess.PIPE).stdout
+        'nvidia-smi --query-gpu=index,memory.free,memory.total --format=csv,nounits'), check=True,
+        stdout=subprocess.PIPE).stdout
     gpus = pandas.read_csv(io.BytesIO(gpus), sep=', ', engine='python')
     gpus = gpus[gpus['memory.total [MiB]'] > 10000]  # only above 10 GB
     if os.environ.get('CUDA_VISIBLE_DEVICES') is not None:
@@ -80,9 +75,11 @@ def set_gpus(n=1):
                    for i in os.environ['CUDA_VISIBLE_DEVICES'].split(',')]
         gpus = gpus[gpus['index'].isin(visible)]
     gpus['ratio'] = gpus['memory.free [MiB]'] / gpus['memory.total [MiB]']
-    gpus = gpus.sort_values(by='ratio', ascending=False)
-    os.environ['CUDA_VISIBLE_DEVICES'] = ','.join(
-        [str(i) for i in gpus['index'].iloc[:n]])
+    gpus = gpus.sort_values(by='memory.free [MiB]', ascending=False)
+    gpus = [str(i) for i in gpus['index'].iloc[:n]]
+    print(f"Using gpu{'s' if len(gpus) > 1 else ''} {gpus}")
+    os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'  # making sure GPUs are numbered the same way as in nvidia_smi
+    os.environ['CUDA_VISIBLE_DEVICES'] = ','.join(gpus)
 
 
 set_gpus(FLAGS.ngpus)
@@ -100,7 +97,6 @@ def train(restore_path=None,
           save_model_epochs=4,
           save_model_secs=60*10
           ):
-
     model = get_model()
     model = torch.nn.DataParallel(model).cuda()
 
@@ -222,7 +218,8 @@ def test(layer='decoder', sublayer='avgpool', restore_path=None, imsize=224, use
     model_feats = []
     with torch.no_grad():
         model_feats = []
-        for fname in tqdm.tqdm(sorted(glob.glob(os.path.join(FLAGS.data_path, '*.*')))):
+        filepaths = glob.glob(os.path.join(FLAGS.data_path, '*.*'))
+        for fname in tqdm.tqdm(sorted(filepaths)):
             im = Image.open(fname).convert('RGB')
             im = transform(im)
             im = im.unsqueeze(0)  # adding extra dimension for batch size of 1
@@ -342,6 +339,18 @@ def accuracy(output, target, topk=(1,)):
         correct = pred.eq(target.view(1, -1).expand_as(pred))
         res = [correct[:k].sum().item() for k in topk]
         return res
+
+
+def flops():
+    model = get_model()
+    fcn = add_flops_counting_methods(model)
+    fcn = fcn.train()
+    fcn.start_flops_count()
+    batch = torch.rand(1, 3, 224, 224)
+    fcn(batch)
+    flops = fcn.compute_average_flops_cost()
+    gflops = flops / 1e9 / 2
+    print(gflops, "GFLOPs")
 
 
 if __name__ == '__main__':
